@@ -33,17 +33,47 @@ let accessToken = null;
 const logEl = document.getElementById('log');
 function log(msg) { logEl.textContent += "\n" + msg; }
 
-document.getElementById('loginBtn').onclick = async () => {
+function setLoggedInUI(account) {
+log("Sesion iniciada como: " + account.username);
+document.getElementById('loginBtn').disabled = true;
+document.getElementById('loginBtn').textContent = "Sesion iniciada";
+acquireAndEnable(account);
+}
+
+async function acquireAndEnable(account) {
 try {
-const loginResponse = await msalInstance.loginPopup({ scopes: ["Files.ReadWrite.AppFolder"] });
-log("Sesion iniciada como: " + loginResponse.account.username);
 const tokenResponse = await msalInstance.acquireTokenSilent({
 scopes: ["Files.ReadWrite.AppFolder"],
-account: loginResponse.account
+account: account
 });
 accessToken = tokenResponse.accessToken;
 log("Permiso concedido: Files.ReadWrite.AppFolder");
 document.getElementById('uploadBtn').disabled = false;
+} catch (err) {
+log("Error al obtener permiso: " + err.message);
+}
+}
+
+window.addEventListener('load', async () => {
+try {
+const response = await msalInstance.handleRedirectPromise();
+if (response && response.account) {
+setLoggedInUI(response.account);
+} else {
+const accounts = msalInstance.getAllAccounts();
+if (accounts.length > 0) {
+setLoggedInUI(accounts[0]);
+}
+}
+} catch (err) {
+log("Error al procesar el regreso del login: " + err.message);
+}
+});
+
+document.getElementById('loginBtn').onclick = async () => {
+try {
+log("Redirigiendo a Microsoft para iniciar sesion...");
+await msalInstance.loginRedirect({ scopes: ["Files.ReadWrite.AppFolder"] });
 } catch (err) {
 log("Error al iniciar sesion: " + err.message);
 }
