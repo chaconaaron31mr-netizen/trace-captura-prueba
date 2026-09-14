@@ -1,1 +1,78 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Prueba TRACE</title></head><body style="font-family: sans-serif; text-align:center; padding-top:80px;"><h1>Prueba de conexion TRACE</h1><p>Si ves esto, GitHub Pages funciona desde la red de la empresa.</p></body></html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRACE - Prueba real de conexion a OneDrive</title>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2/lib/msal-browser.min.js"></script>
+<style>
+body { font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #1a1a1a; background: #fafaf7; }
+h1 { font-size: 1.4rem; }
+p { line-height: 1.5; color: #444; }
+button { display: block; width: 100%; padding: 14px; margin: 12px 0; font-size: 1rem; border-radius: 8px; border: none; cursor: pointer; background: #2b579a; color: white; }
+button:disabled { background: #ccc; cursor: not-allowed; }
+pre { background: #111; color: #9fef9f; padding: 14px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; min-height: 80px; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>TRACE - Prueba real de conexion a OneDrive</h1>
+<p>Esta pagina valida, en vivo, que el permiso Files.ReadWrite.AppFolder funciona: solo puede leer/escribir en una carpeta aislada de tu OneDrive personal, sin acceso a nada mas.</p>
+<button id="loginBtn">1. Iniciar sesion con Microsoft</button>
+<button id="uploadBtn" disabled>2. Subir archivo de prueba a la carpeta aislada</button>
+<pre id="log">Esperando accion...</pre>
+<script>
+const msalConfig = {
+auth: {
+clientId: "51938d0b-c718-4ae5-a21c-33efecf2dd17",
+authority: "https://login.microsoftonline.com/3628eb7e-9a72-46b8-9134-c9a3207cdbc7",
+redirectUri: "https://chaconaaron31mr-netizen.github.io/trace-captura-prueba/"
+}
+};
+const msalInstance = new msal.PublicClientApplication(msalConfig);
+let accessToken = null;
+const logEl = document.getElementById('log');
+function log(msg) { logEl.textContent += "\n" + msg; }
+
+document.getElementById('loginBtn').onclick = async () => {
+try {
+const loginResponse = await msalInstance.loginPopup({ scopes: ["Files.ReadWrite.AppFolder"] });
+log("Sesion iniciada como: " + loginResponse.account.username);
+const tokenResponse = await msalInstance.acquireTokenSilent({
+scopes: ["Files.ReadWrite.AppFolder"],
+account: loginResponse.account
+});
+accessToken = tokenResponse.accessToken;
+log("Permiso concedido: Files.ReadWrite.AppFolder");
+document.getElementById('uploadBtn').disabled = false;
+} catch (err) {
+log("Error al iniciar sesion: " + err.message);
+}
+};
+
+document.getElementById('uploadBtn').onclick = async () => {
+try {
+const fileName = "prueba-trace-" + Date.now() + ".txt";
+const content = "Prueba real de TRACE - " + new Date().toString();
+const resp = await fetch(
+"https://graph.microsoft.com/v1.0/me/drive/special/approot:/" + fileName + ":/content",
+{
+method: "PUT",
+headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "text/plain" },
+body: content
+}
+);
+const data = await resp.json();
+if (resp.ok) {
+log("Archivo subido con exito: " + data.name);
+log("Ruta dentro de OneDrive: " + data.parentReference.path);
+log("Carpeta aislada confirmada (Aplicaciones/TRACE Captura Movil).");
+} else {
+log("Error al subir: " + JSON.stringify(data));
+}
+} catch (err) {
+log("Error: " + err.message);
+}
+};
+</script>
+</body>
+</html>
