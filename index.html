@@ -71,7 +71,7 @@
     <select id="selSociedad"><option value="">-- Selecciona sociedad --</option><option value="ASV">ASV</option><option value="PMI">PMI</option></select>
     <label for="selSucursal">Sucursal</label>
     <select id="selSucursal"><option value="">-- Selecciona sucursal --</option></select>
-    <label for="selDepto">Departamento (Centro de Costo)</label>
+    <label for="selDepto">Departamento o grupo de centros de costo</label>
     <select id="selDepto" disabled><option value="">-- Primero elige sucursal --</option></select>
     <button class="btn-secundario" id="btnFijarDepto" style="width:100%;">Iniciar levantamiento</button>
   </div>
@@ -143,6 +143,7 @@ const STORAGE_RECORDS = "trace_records_v1";
 const STORAGE_CONTEXTO = "trace_contexto_v1";
 const STORAGE_SINPLACA_COUNTER = "trace_sinplaca_counter_v1";
 const STORAGE_LEVS = "trace_levantamientos_v1";
+const STORAGE_GRUPOS = "trace_grupos_v1";
 
 function hoyISO(){ const d = new Date(); return d.toISOString().slice(0,10); }
 function leerRegistros(){ try { return JSON.parse(localStorage.getItem(STORAGE_RECORDS) || "[]"); } catch(e){ return []; } }
@@ -151,6 +152,8 @@ function leerContexto(){ try { return JSON.parse(localStorage.getItem(STORAGE_CO
 function guardarContexto(ctx){ localStorage.setItem(STORAGE_CONTEXTO, JSON.stringify(ctx)); }
 function leerLevs(){ try { return JSON.parse(localStorage.getItem(STORAGE_LEVS) || "{}") || {}; } catch(e){ return {}; } }
 function guardarLevs(o){ localStorage.setItem(STORAGE_LEVS, JSON.stringify(o)); }
+// Grupos de centros de costo (los define TRACE en la computadora y llegan por OneDrive: TRACE_GRUPOS.json)
+function leerGrupos(){ try { return (JSON.parse(localStorage.getItem(STORAGE_GRUPOS) || "{}").grupos) || []; } catch(e){ return []; } }
 
 // ---- Levantamientos (uno por Sociedad + Centro de Costo): en_curso / pausado / finalizado
 function claveLev(soc, cc){ return soc + '|' + cc; }
@@ -194,13 +197,29 @@ selSucursal.onchange = () => {
   }
   selDepto.disabled = false;
   const opt0 = document.createElement('option');
-  opt0.value=''; opt0.textContent='-- Selecciona departamento --';
+  opt0.value=''; opt0.textContent='-- Selecciona departamento o grupo --';
   selDepto.appendChild(opt0);
+  const grupos = leerGrupos().filter(g => g.sucursal === suc);
+  let destinoCc = selDepto;
+  if(grupos.length){
+    const og = document.createElement('optgroup');
+    og.label = 'Grupos (varios centros de costo en un solo lugar)';
+    grupos.forEach(g => {
+      const opt = document.createElement('option');
+      opt.value = g.clave;
+      opt.textContent = 'GRUPO · ' + g.nombre + ' (' + g.ccs.length + ' centros de costo)';
+      og.appendChild(opt);
+    });
+    selDepto.appendChild(og);
+    destinoCc = document.createElement('optgroup');
+    destinoCc.label = 'Centros de costo';
+    selDepto.appendChild(destinoCc);
+  }
   DEPARTAMENTOS.filter(d => d[2] === suc).forEach(d => {
     const opt = document.createElement('option');
     opt.value = d[0];
     opt.textContent = d[1] + ' (CC ' + d[0] + ')';
-    selDepto.appendChild(opt);
+    destinoCc.appendChild(opt);
   });
 };
 
@@ -237,6 +256,11 @@ document.getElementById('btnFijarDepto').onclick = () => {
   const suc = selSucursal.value;
   const cc = selDepto.value;
   if(!soc || !suc || !cc){ alert('Selecciona sociedad, sucursal y departamento primero.'); return; }
+  if(cc.charAt(0) === 'G'){
+    const g = leerGrupos().find(x => x.clave === cc);
+    abrirLevantamiento(soc, suc, cc, 'GRUPO ' + (g ? g.nombre : cc));
+    return;
+  }
   const depObj = DEPARTAMENTOS.find(d => d[0] === cc);
   abrirLevantamiento(soc, suc, cc, depObj[1]);
 };
@@ -304,7 +328,7 @@ function pintarLevs(){
     const t = document.createElement('b');
     t.textContent = l.sociedad + ' · ' + l.departamento;
     const s = document.createElement('small');
-    s.textContent = l.sucursal + ' · CC ' + l.cc + ' · ' + etiquetaEstado(l.estado) + ' · ' + registrosDeLev(l).length + ' registros';
+    s.textContent = l.sucursal + (l.cc.charAt(0) === 'G' ? '' : ' · CC ' + l.cc) + ' · ' + etiquetaEstado(l.estado) + ' · ' + registrosDeLev(l).length + ' registros';
     info.appendChild(t); info.appendChild(s);
     const btn = document.createElement('button');
     btn.className = 'btn-chip';
@@ -317,7 +341,7 @@ function pintarLevs(){
 }
 
 function aplicarContexto(ctx){
-  document.getElementById('ctxDepto').textContent = ctx.sociedad + ' · ' + ctx.sucursal + ' - ' + ctx.nombre + ' (CC ' + ctx.cc + ')';
+  document.getElementById('ctxDepto').textContent = ctx.sociedad + ' · ' + ctx.sucursal + ' - ' + ctx.nombre + (ctx.cc.charAt(0) === 'G' ? '' : ' (CC ' + ctx.cc + ')');
   document.getElementById('ctxEstado').style.display = 'inline-block';
   document.getElementById('cardContexto').style.display = 'none';
   document.getElementById('cardLevs').style.display = 'none';
@@ -497,6 +521,7 @@ async function prepararToken(cuenta){
     accessToken = resp.accessToken;
     cuentaActiva = cuenta;
     setEstadoSync('ok', 'Respaldo conectado');
+    descargarGrupos();
     intentarSincronizar();
   }catch(err){
     setEstadoSync('off', 'Respaldo no conectado');
@@ -514,6 +539,20 @@ if(msalInstance){
       }
     }catch(err){ setEstadoSync('off', 'Respaldo no conectado'); }
   });
+}
+
+// Baja de OneDrive la lista de grupos que armó TRACE (si no hay señal se usa la última guardada)
+async function descargarGrupos(){
+  if(!accessToken || !navigator.onLine) return;
+  try{
+    const resp = await fetch('https://graph.microsoft.com/v1.0/me/drive/special/approot:/TRACE_GRUPOS.json:/content',
+                             { headers: { 'Authorization': 'Bearer ' + accessToken } });
+    if(!resp.ok) return;
+    const datos = await resp.json();
+    if(!datos || !Array.isArray(datos.grupos)) return;
+    localStorage.setItem(STORAGE_GRUPOS, JSON.stringify(datos));
+    if(selSucursal.value){ const v = selDepto.value; selSucursal.onchange(); selDepto.value = v; }
+  }catch(err){ /* sin señal: se queda con la lista guardada */ }
 }
 
 function nombreSeguro(t){ return String(t).replace(/[^a-zA-Z0-9]+/g,'_'); }
