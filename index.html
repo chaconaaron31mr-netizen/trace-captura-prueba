@@ -180,12 +180,25 @@ document.getElementById('ctxFecha').textContent = new Date().toLocaleDateString(
 const selSociedad = document.getElementById('selSociedad');
 const selSucursal = document.getElementById('selSucursal');
 const selDepto = document.getElementById('selDepto');
-const sucursales = [...new Set(DEPARTAMENTOS.map(d => d[2]))].sort();
-sucursales.forEach(s => {
-  const opt = document.createElement('option');
-  opt.value = s; opt.textContent = s;
-  selSucursal.appendChild(opt);
-});
+// Centros de costo agregados en TRACE (llegan en TRACE_GRUPOS.json): se suman a la lista de fabrica
+function sumarCentrosExtra(){
+  let extra = [];
+  try { extra = JSON.parse(localStorage.getItem(STORAGE_GRUPOS) || "{}").centros || []; } catch(e){ extra = []; }
+  extra.forEach(c => { if(Array.isArray(c) && c[0] && !DEPARTAMENTOS.some(d => d[0] === c[0])) DEPARTAMENTOS.push([String(c[0]), c[1] || String(c[0]), c[2] || 'SIN SUCURSAL']); });
+}
+function llenarSucursales(){
+  sumarCentrosExtra();
+  const actual = selSucursal.value;
+  const sucursales = [...new Set(DEPARTAMENTOS.map(d => d[2]).concat(leerGrupos().map(g => g.sucursal).filter(Boolean)))].sort();
+  selSucursal.innerHTML = '<option value="">-- Selecciona sucursal --</option>';
+  sucursales.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s; opt.textContent = s;
+    selSucursal.appendChild(opt);
+  });
+  if(actual && sucursales.includes(actual)) selSucursal.value = actual;
+}
+llenarSucursales();
 
 selSucursal.onchange = () => {
   selDepto.innerHTML = '';
@@ -551,6 +564,7 @@ async function descargarGrupos(){
     const datos = await resp.json();
     if(!datos || !Array.isArray(datos.grupos)) return;
     localStorage.setItem(STORAGE_GRUPOS, JSON.stringify(datos));
+    llenarSucursales();
     if(selSucursal.value){ const v = selDepto.value; selSucursal.onchange(); selDepto.value = v; }
   }catch(err){ /* sin señal: se queda con la lista guardada */ }
 }
